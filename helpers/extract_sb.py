@@ -2,7 +2,7 @@
 
 import subprocess
 import unicorn.arm64_const
-from argparse import ArgumentParser
+import argparse
 from pathlib import Path
 
 def ipsw_get_out_path(output):
@@ -12,8 +12,10 @@ def ipsw_get_out_path(output):
             path = l.split(" ")[-1]
     return Path(path)
 
-def dl_kernel(device, version):
-    output = subprocess.check_output(["ipsw", "--no-color", "download", "appledb", "--os", "iOS", "--version", version, "--device", device, "--kernel", "-y"], text=True, stderr=subprocess.STDOUT)
+def dl_kernel(device, version, os, additional_args=None):
+    base_command = ["ipsw", "--no-color", "download", "appledb", "--os", os, "--version", version, "--device", device, "--kernel", "-y"]
+    full_command = base_command + (additional_args or [])
+    output = subprocess.check_output(full_command, text=True, stderr=subprocess.STDOUT)
     path = ipsw_get_out_path(output)
     if path is None:
         raise Exception(f"Couldn't dl kernel: {output}")
@@ -85,7 +87,7 @@ class Sandbox:
 
         if not lines:
             raise Exception(f"Couldn't find code to load {name} profile")
-        print(f"load {name} code:\n{'\n'.join(lines)}")
+        print(f"load {name} code:\n" + "\n".join(lines))
         return lines
     
     def _get_load_platform_lines(self):
@@ -108,7 +110,7 @@ class Sandbox:
 
         if not lines:
             raise Exception("Couldn't find code to load platform profile")
-        print(f"load platform lines\n{'\n'.join(lines)}")
+        print(f"load platform profile code:\n" + "\n".join(lines))
 
         return lines
 
@@ -125,7 +127,6 @@ class Sandbox:
         emu = Emulator(addr, code)
         emu.hook_unmapped(hook_unmapped_write)
         with emu:
-            # code is expected to write to an unmapped address, will be caught by the hook
             if self.platform_base_addr is None:
                 raise Exception("load platform profile code didn't do the expected stp!")
             platform_base_bytes = emu.emu.mem_read(self.platform_base_addr, 0x10)
@@ -185,9 +186,9 @@ class Sandbox:
         with open(filepath, "wb") as f:
             f.write(sb_bin)
 
-        args = ["python3", "./reverse_sandbox.py", "--release", self.version, "--operations", self.ops_file.absolute(), "--directory", out_dir.absolute(), filepath.absolute()]
-        print(f"running: {args}")
-        subprocess.check_call(args, cwd=Path(__file__).parents[1] / "reverse-sandbox")
+        # args = ["python3", "./reverse_sandbox.py", "--release", self.version, "--operations", self.ops_file.absolute(), "--directory", out_dir.absolute(), filepath.absolute()]
+        # print(f"running: {args}")
+        # subprocess.check_call(args, cwd=Path(__file__).parents[1] / "reverse-sandbox")
 
     def decompile_all(self):
         self.ops_file = self.macho.parent / "operations.txt"
@@ -205,13 +206,16 @@ class Sandbox:
         self.decompile_sb("platform collection", platform_sb)
 
 def main():
-    parser = ArgumentParser("Sandbox Extractor Helper", description="Specify device+version, and this script will do the entire process: Download the kernel cache, extract the sandbox profiles, and run the decompiler.")
-    parser.add_argument("--device", "-d", help="Device", default="iPhone16,1")
-    parser.add_argument("--version", "-v", help="Version", default="17.6.1")
+    parser = argparse.ArgumentParser(prog="Sandbox Extractor Helper",
+                                     description="Specify device+version, and this script will do the entire process: Download the kernel cache, extract the sandbox profiles, and run the decompiler.")
+    parser.add_argument("--os", help="Operating System (default: iOS)", default="iOS")
+    parser.add_argument("--device", "-d", help="Device (default: iPhone16,1)", default="iPhone16,1")
+    parser.add_argument("--version", "-v", help="Version (default: 17.6.1)", default="17.6.1")
+    parser.add_argument("--ipsw-args", nargs=argparse.REMAINDER, help="Additional arguments to pass to the ipsw tool")
 
     args = parser.parse_args()
 
-    k = dl_kernel(args.device, args.version)
+    k = dl_kernel(args.device, args.version, args.os, args.ipsw_args)
 
     version = args.version.split(".")[0]
 
